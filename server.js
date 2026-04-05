@@ -62,6 +62,7 @@ io.on('connection', (socket) => {
     if (!text || !text.trim()) return;
 
     try {
+      // Проверяем что пользователь в чате
       const member = await pool.query(
         'SELECT 1 FROM chat_members WHERE chat_id = $1 AND user_id = $2',
         [chat_id, userId]
@@ -80,25 +81,8 @@ io.on('connection', (socket) => {
 
       const message = result.rows[0];
 
-      // Отправляем сообщение всем в комнате
+      // Отправляем всем в комнате чата
       io.to(`chat_${chat_id}`).emit('new_message', message);
-
-      // Получаем всех участников чата и уведомляем об обновлении списка
-      const members = await pool.query(
-        'SELECT user_id FROM chat_members WHERE chat_id = $1', [chat_id]
-      );
-      members.rows.forEach(row => {
-        const memberSocketId = onlineUsers.get(row.user_id);
-        if (memberSocketId) {
-          io.to(memberSocketId).emit('chats_updated');
-          // Добавляем участника в комнату если ещё не в ней
-          const memberSocket = io.sockets.sockets.get(memberSocketId);
-          if (memberSocket) {
-            memberSocket.join(`chat_${chat_id}`);
-          }
-        }
-      });
-
     } catch (e) {
       console.error('Ошибка отправки сообщения:', e);
     }
