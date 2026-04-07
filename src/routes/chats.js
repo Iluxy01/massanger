@@ -8,7 +8,17 @@ router.get('/', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT 
-        c.id, c.name, c.is_group,
+        c.id,
+        c.is_group,
+        CASE
+          WHEN c.is_group = false THEN (
+            SELECT u.display_name FROM users u
+            JOIN chat_members cm2 ON cm2.user_id = u.id
+            WHERE cm2.chat_id = c.id AND u.id != $1
+            LIMIT 1
+          )
+          ELSE c.name
+        END as name,
         (SELECT text FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message,
         (SELECT created_at FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_time,
         (SELECT COUNT(*) FROM messages WHERE chat_id = c.id AND is_read = false AND sender_id != $1) as unread_count,
@@ -52,6 +62,7 @@ router.post('/direct', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Пользователь не найден' });
     }
 
+    // Для личного чата название не используется — показывается имя собеседника динамически
     const chat = await pool.query(
       `INSERT INTO chats (name, is_group, created_by) VALUES ($1, false, $2) RETURNING id`,
       [targetUser.rows[0].display_name, myId]
@@ -96,6 +107,48 @@ router.post('/group', authMiddleware, async (req, res) => {
     }
 
     res.json({ id: chatId });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// Получить данные конкретного чата (для обновления после отправки сообщения)
+router.get('/:chatId', authMiddleware, async (req, res) => {
+  const { chatId } = req.params;
+  try {
+    const member = await pool.query(
+      'SELECT 1 FROM chat_members WHERE chat_id = $1 AND user_id = $2',
+      [chatId, req.user.id]
+    );
+    if (member.rows.length === 0) {
+      return res.status(403).json({ error: 'Нет доступа' });
+    }
+
+    const result = await pool.query(`
+      SELECT 
+        c.id,
+        c.is_group,
+        CASE
+          WHEN c.is_group = false THEN (
+            SELECT u.display_name FROM users u
+            JOIN chat_members cm2 ON cm2.user_id = u.id
+            WHERE cm2.chat_id = c.id AND u.id != $2
+            LIMIT 1
+          )
+          ELSE c.name
+        END as name,
+        (SELECT text FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message,
+        (SELECT created_at FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_time,
+        (SELECT COUNT(*) FROM messages WHERE chat_id = c.id AND is_read = false AND sender_id != $2) as unread_count,
+        array_agg(cm.user_id) as member_ids
+      FROM chats c
+      JOIN chat_members cm ON c.id = cm.chat_id
+      WHERE c.id = $1
+      GROUP BY c.id
+    `, [chatId, req.user.id]);
+
+    res.json(result.rows[0]);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Ошибка сервера' });
