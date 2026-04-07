@@ -81,25 +81,8 @@ io.on('connection', (socket) => {
 
       const message = result.rows[0];
 
-      // Присоединяем всех участников чата к комнате (на случай нового чата)
-      const members = await pool.query(
-        'SELECT user_id FROM chat_members WHERE chat_id = $1', [chat_id]
-      );
-      for (const row of members.rows) {
-        const socketId = onlineUsers.get(row.user_id);
-        if (socketId) {
-          const memberSocket = io.sockets.sockets.get(socketId);
-          if (memberSocket) {
-            memberSocket.join(`chat_${chat_id}`);
-          }
-        }
-      }
-
       // Отправляем всем в комнате чата
       io.to(`chat_${chat_id}`).emit('new_message', message);
-
-      // Уведомляем участников об обновлении списка чатов
-      io.to(`chat_${chat_id}`).emit('chats_updated');
     } catch (e) {
       console.error('Ошибка отправки сообщения:', e);
     }
